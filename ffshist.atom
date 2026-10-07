@@ -1,0 +1,369 @@
+<feed xmlns='http://www.w3.org/2005/Atom'>
+<title>kernel/git/next/linux-next.git/drivers/usb/gadget/function/f_fs.c, branch master</title>
+<subtitle>The linux-next integration testing tree</subtitle>
+<id>http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/atom/drivers/usb/gadget/function/f_fs.c</id>
+<link rel='self' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/atom/drivers/usb/gadget/function/f_fs.c'/>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/'/>
+<updated>2026-10-01T05:11:27Z</updated>
+<entry>
+<title>usb: gadget: f_fs: Fix NULL pointer dereference in FUNCTIONFS_ENDPOINT_DESC</title>
+<updated>2026-10-01T05:11:27Z</updated>
+<author>
+<name>Yuchao Zhang</name>
+<email>ndaugoing@gmail.com</email>
+</author>
+<published>2026-09-18T00:54:38Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=9cd072788c76595529eb38f42bf94d23852f8534'/>
+<id>urn:sha1:9cd072788c76595529eb38f42bf94d23852f8534</id>
+<content type='text'>
+When user space sets up FunctionFS with only full-speed descriptors
+(e.g., flags = FUNCTIONFS_HAS_FS_DESC) and the gadget operates at a
+higher speed (such as USB_SPEED_HIGH or USB_SPEED_SUPER),
+config_ep_by_speed() detects that the function lacks descriptors for
+the current speed, logs a warning, and falls back to full-speed
+descriptors. The endpoint is then successfully enabled via
+usb_ep_enable(), and epfile-&gt;ep becomes valid.
+
+However, when user space subsequently issues the FUNCTIONFS_ENDPOINT_DESC
+ioctl to query the endpoint descriptor, ffs_epfile_ioctl() selects the
+descriptor index solely based on gadget-&gt;speed:
+
+	switch (epfile-&gt;ffs-&gt;gadget-&gt;speed) {
+	case USB_SPEED_SUPER:
+	case USB_SPEED_SUPER_PLUS:
+		desc_idx = 2;
+		break;
+	case USB_SPEED_HIGH:
+		desc_idx = 1;
+		break;
+	default:
+		desc_idx = 0;
+	}
+	desc = epfile-&gt;ep-&gt;descs[desc_idx];
+	memcpy(&amp;desc1, desc, desc-&gt;bLength);
+
+Because user space only supplied full-speed descriptors,
+epfile-&gt;ep-&gt;descs[1] is NULL. Dereferencing desc-&gt;bLength triggers an
+immediate kernel NULL pointer dereference panic.
+
+Fix this by falling back through lower speed descriptors if the current
+speed descriptor was not supplied, matching the fallback logic in
+config_ep_by_speed() and historical f_fs behavior. If still missing,
+fall back to epfile-&gt;ep-&gt;ep-&gt;desc (the active descriptor), and return
+-EINVAL safely if no valid descriptor is found. In addition, mark desc
+as const to match struct usb_ep::desc and avoid discarding qualifiers.
+
+Fixes: c559a3534109 ("usb: gadget: f_fs: add ioctl returning ep descriptor")
+Cc: stable@kernel.org
+Signed-off-by: Yuchao Zhang &lt;ndaugoing@gmail.com&gt;
+Acked-by: Michał Nazarewicz &lt;mina86@mina86.com&gt;
+Link: https://patch.msgid.link/20260918005438.81263-2-ndaugoing@gmail.com
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+<entry>
+<title>usb: gadget: f_fs: Fix Use-After-Free in AIO error path</title>
+<updated>2026-08-14T01:48:36Z</updated>
+<author>
+<name>Neill Kapron</name>
+<email>nkapron@google.com</email>
+</author>
+<published>2026-07-24T23:51:00Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=e78dcb1f7ec271449c54984dc90c62a5ba272de7'/>
+<id>urn:sha1:e78dcb1f7ec271449c54984dc90c62a5ba272de7</id>
+<content type='text'>
+In ffs_epfile_write_iter() and ffs_epfile_read_iter(), when ffs_epfile_io()
+fails with an error other than -EIOCBQUEUED, the io_data structure (`p`) is
+freed. However, for AIO operations, the kiocb cancel function was already
+armed and kiocb-&gt;private was set to `p`.
+
+If a concurrent cancel operation (such as sys_io_cancel()) executes after
+ffs_epfile_io() fails but before the function frees `p`, a Use-After-Free
+can occur when the cancellation handler accesses the freed pointer.
+
+To securely fix this race condition, we must properly un-arm the
+cancellation. Invoking `kiocb-&gt;ki_complete()` does exactly this by
+acquiring `ctx-&gt;ctx_lock` and safely removing the kiocb from the active
+sequence. In doing so, it ensures that a parallel io_cancel can no longer
+discover the kiocb, effectively closing the race window.
+
+We then return -EIOCBQUEUED to notify the VFS layer that the kiocb has been
+consumed and it should avoid attempting to complete the request again or
+triggering subsequent completion handlers.
+
+Fixes: de2080d41b5d ("gadget/function/f_fs.c: close leaks")
+Cc: stable@vger.kernel.org
+Reported-by: Xingyu Jin &lt;xingyuj@google.com&gt;
+Assisted-by: Antigravity:gemini-3.1-pro
+Signed-off-by: Neill Kapron &lt;nkapron@google.com&gt;
+Link: https://patch.msgid.link/20260724235100.106011-1-nkapron@google.com
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+<entry>
+<title>usb: gadget: f_fs: Prevent deadlock during ep0 read loop</title>
+<updated>2026-08-14T01:48:31Z</updated>
+<author>
+<name>Neill Kapron</name>
+<email>nkapron@google.com</email>
+</author>
+<published>2026-07-24T20:41:16Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=569dd7e5dcffe1e1c6b26ca2cd3be57eb433e082'/>
+<id>urn:sha1:569dd7e5dcffe1e1c6b26ca2cd3be57eb433e082</id>
+<content type='text'>
+Currently, ffs_ep0_read() holds ffs-&gt;mutex when it prepares to go to
+sleep waiting for an event. When no setup events are pending, it calls
+wait_event_interruptible_exclusive_locked_irq() with the mutex still
+held. The wait macro deliberately drops the waitqueue spinlock before
+sleeping but does not drop the mutex.
+
+If a userspace daemon is polling ep0 via read() and the gadget is
+asynchronously torn down via configfs (e.g., echo "" &gt; UDC), a
+deadlock can occur:
+
+1. The configfs teardown calls functionfs_unbind(), which queues a
+   FUNCTIONFS_UNBIND event.
+2. The daemon wakes up, consumes the event, and drops the mutex.
+3. However, if the daemon loops and immediately issues another read()
+   before exiting, it reacquires ffs-&gt;mutex and again goes into an
+   interruptible sleep.
+4. Meanwhile, functionfs_unbind() continues execution and attempts to
+   acquire ffs-&gt;mutex to tear down ep0req.
+5. The kernel deadlocks because the configfs thread is stuck in an
+   uninterruptible sleep waiting for the mutex, while the userspace
+   daemon is in an interruptible sleep holding the mutex forever
+   because no more events will arrive.
+
+To fix this, we drop both the waitqueue spinlock and ffs-&gt;mutex before
+going to sleep, and use wait_event_interruptible_exclusive() instead.
+Upon waking up, we jump back to the `retry` label to safely reacquire
+the mutex and re-evaluate the state machine. By not sleeping with
+ffs-&gt;mutex held, we natively decouple gadget teardowns (which require
+the mutex) from userspace polling.
+
+Fixes: ddf8abd25994 ("USB: f_fs: the FunctionFS driver")
+Cc: stable@vger.kernel.org
+Assisted-by: Antigravity:gemini-3.1-pro
+Signed-off-by: Neill Kapron &lt;nkapron@google.com&gt;
+Link: https://patch.msgid.link/20260724204117.4036015-1-nkapron@google.com
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+<entry>
+<title>usb: gadget: f_fs: fix __le16 of wMaxPacketSize</title>
+<updated>2026-07-17T10:30:40Z</updated>
+<author>
+<name>Ben Dooks</name>
+<email>ben.dooks@codethink.co.uk</email>
+</author>
+<published>2026-07-13T12:28:22Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=c9a934ddee1d572cd7bba3002aacee8d10896e75'/>
+<id>urn:sha1:c9a934ddee1d572cd7bba3002aacee8d10896e75</id>
+<content type='text'>
+The wMaxPacketSize is __le16 type, fix the sparse warnings by changing
+the type.
+
+Fixes the following sparse warnings:
+drivers/usb/gadget/function/f_fs.c:3346:32: warning: incorrect type in assignment (different base types)
+drivers/usb/gadget/function/f_fs.c:3346:32:    expected unsigned short [usertype] wMaxPacketSize
+drivers/usb/gadget/function/f_fs.c:3346:32:    got restricted __le16 [usertype] wMaxPacketSize
+drivers/usb/gadget/function/f_fs.c:3371:36: warning: incorrect type in assignment (different base types)
+drivers/usb/gadget/function/f_fs.c:3371:36:    expected restricted __le16 [usertype] wMaxPacketSize
+drivers/usb/gadget/function/f_fs.c:3371:36:    got unsigned short [usertype] wMaxPacketSize
+
+Signed-off-by: Ben Dooks &lt;ben.dooks@codethink.co.uk&gt;
+Signed-off-by: Andrzej Pietrasiewicz &lt;andrzej.p@collabora.com&gt;
+Signed-off-by: Felipe Balbi &lt;felipe.balbi@linux.intel.com&gt;
+Link: https://patch.msgid.link/20260713122822.1331334-1-ben.dooks@codethink.co.uk
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+<entry>
+<title>Merge 7.2-rc3 into usb-next</title>
+<updated>2026-07-13T05:09:28Z</updated>
+<author>
+<name>Greg Kroah-Hartman</name>
+<email>gregkh@linuxfoundation.org</email>
+</author>
+<published>2026-07-13T05:09:28Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=b60af0b9e752aa77f29daac026dd2314cc2a0bb0'/>
+<id>urn:sha1:b60af0b9e752aa77f29daac026dd2314cc2a0bb0</id>
+<content type='text'>
+We need the USB fixes in here as well to build on top of.
+
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+<entry>
+<title>USB: gadget: ffs: fix mm lifetime handling</title>
+<updated>2026-07-10T13:55:31Z</updated>
+<author>
+<name>Gabriel Prostitis</name>
+<email>prostitisgabriel@gmail.com</email>
+</author>
+<published>2026-06-01T06:44:10Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=5eb5c72c72fef76cb765ef1669b62b6a3ba1bfc8'/>
+<id>urn:sha1:5eb5c72c72fef76cb765ef1669b62b6a3ba1bfc8</id>
+<content type='text'>
+io_data stores a pointer to the submitting task's mm_struct,
+but does not currently hold a reference to it while async
+requests are pending.
+
+This can result in a use-after-free if the task exits before
+completion handling finishes.
+
+Take a reference with mmgrab() when queuing the read request
+and release it with mmdrop() on request completion.
+
+Reported-by: Gabriel Prostitis &lt;prostitisgabriel@gmail.com&gt;
+Signed-off-by: Gabriel Prostitis &lt;prostitisgabriel@gmail.com&gt;
+Link: https://patch.msgid.link/20260601-mm-uaf-fix-v2-1-3c942a707bce@gmail.com
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+<entry>
+<title>usb: gadget: f_fs: Introduce rw_proxy file descriptors</title>
+<updated>2026-07-10T13:00:47Z</updated>
+<author>
+<name>Neill Kapron</name>
+<email>nkapron@google.com</email>
+</author>
+<published>2026-06-19T04:06:06Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=0f0ea552cd215a01baca1e99eec02e2f8df0c897'/>
+<id>urn:sha1:0f0ea552cd215a01baca1e99eec02e2f8df0c897</id>
+<content type='text'>
+Currently, FunctionFS exposes each USB endpoint as a separate,
+unidirectional file descriptor (e.g., `ep1` for IN, `ep2` for OUT).
+While this mirrors the underlying hardware structure, it forces
+userspace daemons implementing bidirectional protocols to manage
+multiple file descriptors. When dealing with legacy protocols which
+require exposing a single, bi-directional fd to userspace, this becomes
+problematic.
+
+This patch introduces the `FUNCTIONFS_RW_PROXY_EPS` UAPI flag. When
+passed in the descriptor header during initialization, FunctionFS
+provisions a "rw_proxy" bidirectional file descriptor (e.g., `ep1_rw`)
+alongside every pair of IN/OUT endpoints.
+
+Implementation details:
+- RW proxy files act as a pure VFS alias, proxying operations
+  directly to the base ffs_epfile instances. A `read()` proxies to
+  the OUT endpoint's file, and a `write()` proxies to the IN file.
+- Because operations are proxied natively, they reuse the underlying
+  base endpoint's lock (`epfile-&gt;mutex`) and tracking state. This
+  serializes concurrent I/O, preventing buffer corruption or races
+  even if userspace mixes transfers across both the rw_proxy and base files
+  while allowing full-duplex synchronous operations to occur concurrently
+  without serializing on a single lock.
+- Control operations (like IOCTLs) and intentional stalls (via
+  reverse-direction I/O) must still be issued on the base endpoints, as the
+  rw_proxy returns `-ENOTTY` for IOCTLs and cannot trigger stalls.
+
+Assisted-by: Antigravity:gemini-3.1-pro
+Signed-off-by: Neill Kapron &lt;nkapron@google.com&gt;
+Link: https://patch.msgid.link/20260619040609.4010746-5-nkapron@google.com
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+<entry>
+<title>usb: gadget: f_fs: Add zero-length packet ioctl</title>
+<updated>2026-07-10T13:00:45Z</updated>
+<author>
+<name>Neill Kapron</name>
+<email>nkapron@google.com</email>
+</author>
+<published>2026-06-19T04:06:05Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=c3249c462b30e003712cd80f05c26ae3ee29040c'/>
+<id>urn:sha1:c3249c462b30e003712cd80f05c26ae3ee29040c</id>
+<content type='text'>
+When transferring data from a USB gadget to a host, a transfer is
+considered complete when the host receives a short packet (a packet
+smaller than wMaxPacketSize). If the total transfer length is an
+exact multiple of wMaxPacketSize, a Zero-Length Packet (ZLP) must
+be appended to signal the end of the transfer.
+
+FunctionFS currently provides no mechanism for userspace to instruct
+the kernel to set the `req-&gt;zero` flag on transfers. Userspace
+workarounds, such as manually submitting separate 0-byte requests,
+may not be available for legacy protocols which must maintain write
+behavior compatibility when moved to functionfs implementations.
+
+To resolve this, introduce a new ioctl, FUNCTIONFS_ENDPOINT_ENABLE_ZLP,
+which takes a pointer to a __u32 flag. When enabled, all subsequent
+transfers on that endpoint will have the `req-&gt;zero` flag set, allowing
+the underlying USB Device Controller (UDC) hardware to automatically
+append a ZLP only when mathematically required. For logical transfers
+chunked across multiple requests, userspace can dynamically toggle this
+flag, enabling it only prior to submitting the final chunk.
+
+The flag defaults to false to maintain backward compatibility. Once
+enabled, the state is persistent for the lifetime of the endpoint and
+will not be reset by opening or closing the endpoint file descriptors.
+
+Assisted-by: Gemini-CLI:gemini-3.1-pro-preview
+Signed-off-by: Neill Kapron &lt;nkapron@google.com&gt;
+Link: https://patch.msgid.link/20260619040609.4010746-4-nkapron@google.com
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+<entry>
+<title>usb: gadget: f_fs: Fix fence cleanup in ffs_dmabuf_transfer() error paths</title>
+<updated>2026-07-10T13:00:41Z</updated>
+<author>
+<name>Nuno Sá</name>
+<email>nuno.sa@analog.com</email>
+</author>
+<published>2026-06-12T14:57:57Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=621707dc67c9846fd876d7579ec951d92aa033f1'/>
+<id>urn:sha1:621707dc67c9846fd876d7579ec951d92aa033f1</id>
+<content type='text'>
+The error paths for endpoint-disabled (ESHUTDOWN) and request-allocation
+failure (ENOMEM) in ffs_dmabuf_transfer() jump to err_fence_put which
+calls dma_fence_put() on the fence. However, at that point the fence has
+only been kmalloc'd — dma_fence_init() has not been called yet, so the
+refcount and the fence ops are uninitialized. Calling dma_fence_put() on
+such an object leads to undefined behavior.
+
+Use kfree() instead, since the fence is just a plain allocation at this
+stage, and rename the label to err_fence_free to reflect the actual
+cleanup action.
+
+Fixes: 7b07a2a7ca02 ("usb: gadget: functionfs: Add DMABUF import interface")
+Signed-off-by: Nuno Sá &lt;nuno.sa@analog.com&gt;
+Reviewed-by: Paul Cercueil &lt;paul@crapouillou.net&gt;
+Link: https://patch.msgid.link/20260612-fix-f_fs-fence-cleanup-v1-1-79f489b0efe9@analog.com
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+<entry>
+<title>usb: gadget: f_fs: Tie read_buffer lifetime to ffs_epfile</title>
+<updated>2026-06-25T14:24:00Z</updated>
+<author>
+<name>Neill Kapron</name>
+<email>nkapron@google.com</email>
+</author>
+<published>2026-06-19T04:06:04Z</published>
+<link rel='alternate' type='text/html' href='http://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=8bdcf96eb135aebacac319667f87db034fb38406'/>
+<id>urn:sha1:8bdcf96eb135aebacac319667f87db034fb38406</id>
+<content type='text'>
+Currently, ffs_epfile_release unconditionally frees the endpoint's
+read_buffer when a file descriptor is closed. If userspace explicitly
+opens the endpoint multiple times and closes one, the read_buffer is
+destroyed. This can lead to silent data loss if other file descriptors
+are still actively reading from the endpoint.
+
+By tying the lifetime of the read_buffer to the ffs_epfile structure itself
+(which is destroyed when the functionfs instance is torn down in
+ffs_epfiles_destroy), we eliminate the brittle dependency on open/release
+calls while correctly matching the conceptual lifetime of unread data on
+the hardware endpoint.
+
+Fixes: 9353afbbfa7b ("usb: gadget: f_fs: buffer data from ‘oversized’ OUT requests")
+Cc: stable &lt;stable@kernel.org&gt;
+Assisted-by: Antigravity:gemini-3.1-pro
+Signed-off-by: Neill Kapron &lt;nkapron@google.com&gt;
+Link: https://patch.msgid.link/20260619040609.4010746-3-nkapron@google.com
+Signed-off-by: Greg Kroah-Hartman &lt;gregkh@linuxfoundation.org&gt;
+</content>
+</entry>
+</feed>

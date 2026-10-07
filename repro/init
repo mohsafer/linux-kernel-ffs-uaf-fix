@@ -1,0 +1,16 @@
+#!/bin/busybox sh
+/bin/busybox --install -s /bin
+mkdir -p /proc /sys /dev /tmp /sys/kernel/config
+for d in ffs0 ffs1 ffs2 ffs3; do mkdir -p /mnt/$d; done
+mount -t proc none /proc
+mount -t sysfs none /sys
+mount -t devtmpfs none /dev
+mount -t configfs none /sys/kernel/config
+
+echo "=== repro starting (REPRO_SECS=$REPRO_SECS) ==="
+/repro "${REPRO_SECS:-45}"
+rc=$?
+echo "=== repro exited rc=$rc, checking dmesg ==="
+dmesg | grep -iE "kasan|use-after-free|ffs_" | head -60
+echo "=== VERDICT_CHECK_DONE ==="
+poweroff -f

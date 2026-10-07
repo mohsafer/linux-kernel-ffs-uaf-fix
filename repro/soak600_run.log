@@ -1,0 +1,2 @@
+qemu rc=0, log size 82482 lines
+RESULT: clean (no KASAN report)

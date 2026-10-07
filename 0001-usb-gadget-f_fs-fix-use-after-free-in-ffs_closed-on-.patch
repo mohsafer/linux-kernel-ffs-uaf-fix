@@ -1,0 +1,138 @@
+From 22a04c62769132036670e2392ec97ec02696cfc9 Mon Sep 17 00:00:00 2001
+From: Mohammad Mosafer <mohsafer@gmail.com>
+Date: Tue, 6 Oct 2026 15:39:24 -0500
+Subject: [PATCH v2] usb: gadget: f_fs: fix use-after-free in ffs_closed() on
+ umount
+
+ffs_free_inst() releases the ffs_dev with ffs_release_dev() and only
+then re-acquires ffs_dev_lock to free it with _ffs_free_dev().  In
+between, the dev is still linked on the ffs_devices list while already
+marked unmounted, so a concurrent mount(2) of functionfs finds it by
+name in ffs_acquire_dev() and links a fresh ffs_data to the doomed dev
+(ffs_data->private_data = dev).  _ffs_free_dev() then kfrees the dev,
+and when that mount is torn down, ffs_closed() dereferences the stale
+ffs->private_data:
+
+  BUG: KASAN: slab-use-after-free in ffs_data_clear+0x438/0x530
+  Write of size 1 at addr ffff88810594664a by task repro/116
+    ffs_data_clear+0x438/0x530
+    ffs_fs_kill_sb+0x7b/0x510
+    deactivate_locked_super+0xa9/0x200
+    cleanup_mnt+0x255/0x380
+    ... reached via umount(2)
+  Freed by task 112:
+    kfree+0x127/0x3b0
+    ffs_free_inst+0x10c/0x1a0
+    usb_put_function_instance+0x8a/0xc0
+    configfs_rmdir+0x773/0x9c0
+  Allocated by task 113:
+    ffs_alloc_inst+0x109/0x360
+    function_make+0x138/0x330
+    configfs_mkdir+0x48b/0x1090
+
+Hold ffs_dev_lock across the release and the free so that a released
+dev is never findable, splitting ffs_release_dev() into a lock-assuming
+_ffs_release_dev() (matching the _ffs_* convention in this file).  For
+the same reason, re-read ffs->private_data under ffs_dev_lock in
+ffs_data_put(): the argument read there was unlocked, so a concurrent
+ffs_free_inst() could unlink and free the dev while the putter waited
+on the mutex, and the subsequent ffs_release_dev() would dereference
+the freed dev.  The now unreached ffs_release_dev() wrapper is dropped;
+its remaining callers use _ffs_release_dev() with the lock held.
+
+The race was reproduced with a multi-threaded harness racing configfs
+mkdir/rmdir of the ffs instance against mount/umount of functionfs on
+a KASAN kernel: the unpatched kernel reports the use-after-free
+reliably (2/2 runs), the patched kernel survives an extended soak with
+identical churn (2/2 runs clean).
+
+Reported-by: syzbot+6227549bd2c8a1ec8ba0@syzkaller.appspotmail.com
+Closes: https://syzkaller.appspot.com/bug?extid=6227549bd2c8a1ec8ba0
+Fixes: 5920cda627688c ("usb: gadget: FunctionFS: convert to new function interface with backward compatibility")
+Signed-off-by: Mohammad Mosafer <mohsafer@gmail.com>
+---
+
+Changes in v2:
+- Re-read ffs->private_data under ffs_dev_lock in ffs_data_put(): the
+  unlocked argument read raced with a concurrent ffs_free_inst() freeing
+  the dev while the putter waited on ffs_dev_lock (flagged by the
+  Sashiko review bot).
+- Drop the now-unused ffs_release_dev() wrapper.
+ drivers/usb/gadget/function/f_fs.c | 31 ++++++++++++++++++++++--------
+ 1 file changed, 23 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/usb/gadget/function/f_fs.c b/drivers/usb/gadget/function/f_fs.c
+index c64a268e98a4..960b73dc06b3 100644
+--- a/drivers/usb/gadget/function/f_fs.c
++++ b/drivers/usb/gadget/function/f_fs.c
+@@ -288,7 +288,7 @@ static struct ffs_dev *_ffs_find_dev(const char *name);
+ static struct ffs_dev *_ffs_alloc_dev(void);
+ static void _ffs_free_dev(struct ffs_dev *dev);
+ static int ffs_acquire_dev(const char *dev_name, struct ffs_data *ffs_data);
+-static void ffs_release_dev(struct ffs_dev *ffs_dev);
++static void _ffs_release_dev(struct ffs_dev *ffs_dev);
+ static int ffs_ready(struct ffs_data *ffs);
+ static void ffs_closed(struct ffs_data *ffs);
+ static void ffs_reset_work(struct work_struct *work);
+@@ -2231,7 +2231,14 @@ static void ffs_data_put(struct ffs_data *ffs)
+ 	if (refcount_dec_and_test(&ffs->ref)) {
+ 		pr_info("%s(): freeing\n", __func__);
+ 		ffs_data_clear(ffs);
+-		ffs_release_dev(ffs->private_data);
++		/*
++		 * ffs->private_data must be re-read under ffs_dev_lock:
++		 * a concurrent ffs_free_inst() may have NULLed it and
++		 * freed the dev it pointed to.
++		 */
++		ffs_dev_lock();
++		_ffs_release_dev(ffs->private_data);
++		ffs_dev_unlock();
+ 		BUG_ON(waitqueue_active(&ffs->ev.waitq) ||
+ 		       swait_active(&ffs->ep0req_completion.wait) ||
+ 		       waitqueue_active(&ffs->wait));
+@@ -4147,8 +4154,17 @@ static void ffs_free_inst(struct usb_function_instance *f)
+ 	struct f_fs_opts *opts;
+ 
+ 	opts = to_f_fs_opts(f);
+-	ffs_release_dev(opts->dev);
++
++	/*
++	 * Release and free the dev under a single ffs_dev_lock critical
++	 * section. Between ffs_release_dev() and _ffs_free_dev() the dev
++	 * would still be on the ffs_devices list while already unmounted,
++	 * so a concurrent ffs_acquire_dev() could link a fresh ffs_data to
++	 * the doomed dev, leaving it with a dangling ->private_data that is
++	 * dereferenced in ffs_closed() when that mount is torn down.
++	 */
+ 	ffs_dev_lock();
++	_ffs_release_dev(opts->dev);
+ 	_ffs_free_dev(opts->dev);
+ 	ffs_dev_unlock();
+ 	kfree(opts);
+@@ -4363,10 +4379,11 @@ static int ffs_acquire_dev(const char *dev_name, struct ffs_data *ffs_data)
+ 	return ret;
+ }
+ 
+-static void ffs_release_dev(struct ffs_dev *ffs_dev)
++/*
++ * ffs_dev_lock must be taken by the caller
++ */
++static void _ffs_release_dev(struct ffs_dev *ffs_dev)
+ {
+-	ffs_dev_lock();
+-
+ 	if (ffs_dev && ffs_dev->mounted) {
+ 		ffs_dev->mounted = false;
+ 		if (ffs_dev->ffs_data) {
+@@ -4377,8 +4394,6 @@ static void ffs_release_dev(struct ffs_dev *ffs_dev)
+ 		if (ffs_dev->ffs_release_dev_callback)
+ 			ffs_dev->ffs_release_dev_callback(ffs_dev);
+ 	}
+-
+-	ffs_dev_unlock();
+ }
+ 
+ static int ffs_ready(struct ffs_data *ffs)
+-- 
+2.34.1
+

@@ -1,0 +1,48 @@
+usb: gadget: f_fs: fix use-after-free in ffs_closed() on umount
+
+ffs_free_inst() releases the ffs_dev with ffs_release_dev() and only
+then re-acquires ffs_dev_lock to free it with _ffs_free_dev().  In
+between, the dev is still linked on the ffs_devices list while already
+marked unmounted, so a concurrent mount(2) of functionfs finds it by
+name in ffs_acquire_dev() and links a fresh ffs_data to the doomed dev
+(ffs_data->private_data = dev).  _ffs_free_dev() then kfrees the dev,
+and when that mount is torn down, ffs_closed() dereferences the stale
+ffs->private_data:
+
+  BUG: KASAN: slab-use-after-free in ffs_data_clear+0x438/0x530
+  Write of size 1 at addr ffff88810594664a by task repro/116
+    ffs_data_clear+0x438/0x530
+    ffs_fs_kill_sb+0x7b/0x510
+    deactivate_locked_super+0xa9/0x200
+    cleanup_mnt+0x255/0x380
+    ... reached via umount(2)
+  Freed by task 112:
+    kfree+0x127/0x3b0
+    ffs_free_inst+0x10c/0x1a0
+    usb_put_function_instance+0x8a/0xc0
+    configfs_rmdir+0x773/0x9c0
+  Allocated by task 113:
+    ffs_alloc_inst+0x109/0x360
+    function_make+0x138/0x330
+    configfs_mkdir+0x48b/0x1090
+
+Hold ffs_dev_lock across the release and the free so that a released
+dev is never findable, splitting ffs_release_dev() into a lock-assuming
+_ffs_release_dev() (matching the _ffs_* convention in this file).  For
+the same reason, re-read ffs->private_data under ffs_dev_lock in
+ffs_data_put(): the argument read there was unlocked, so a concurrent
+ffs_free_inst() could unlink and free the dev while the putter waited
+on the mutex, and the subsequent ffs_release_dev() would dereference
+the freed dev.  The now unreached ffs_release_dev() wrapper is dropped;
+its remaining callers use _ffs_release_dev() with the lock held.
+
+The race was reproduced with a multi-threaded harness racing configfs
+mkdir/rmdir of the ffs instance against mount/umount of functionfs on
+a KASAN kernel: the unpatched kernel reports the use-after-free
+reliably (2/2 runs), the patched kernel survives an extended soak with
+identical churn (2/2 runs clean).
+
+Reported-by: syzbot+6227549bd2c8a1ec8ba0@syzkaller.appspotmail.com
+Closes: https://syzkaller.appspot.com/bug?extid=6227549bd2c8a1ec8ba0
+Fixes: 5920cda627688c ("usb: gadget: FunctionFS: convert to new function interface with backward compatibility")
+Signed-off-by: Mohammad Mosafer <mohsafer@gmail.com>

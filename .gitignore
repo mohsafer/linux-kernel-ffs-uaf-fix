@@ -1,0 +1,11 @@
+repro/initramfs/
+repro/initramfs.cpio.gz
+repro/repro
+docs/_qa.py
+docs/documentation.aux
+docs/documentation.log
+docs/documentation.out
+docs/documentation.toc
+*.swp
+linux/
+.nfs_test
