@@ -3,11 +3,11 @@
  * f_fs.c -- user mode file system API for USB composite function controllers
  *
  * Copyright (C) 2010 Samsung Electronics
- * Author: Michal Nazarewicz <mina86@mina86.com>
+ * Author: [REDACTED_NAME] <[REDACTED_EMAIL]>
  *
  * Based on inode.c (GadgetFS) which was:
- * Copyright (C) 2003-2004 David Brownell
- * Copyright (C) 2003 Agilent Technologies
+ * Copyright (C) 2003[REDACTED_ORG]
+ * Copyright (C) 2003 [REDACTED_ORG]
  */
 
 
@@ -4478,4 +4478,4 @@ static char *ffs_prepare_buffer(const char __user *buf, size_t len)
 DECLARE_USB_FUNCTION_INIT(ffs, ffs_alloc_inst, ffs_alloc);
 MODULE_DESCRIPTION("user mode file system API for USB composite function controllers");
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Michal Nazarewicz");
+MODULE_AUTHOR("[REDACTED_NAME]");

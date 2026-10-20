@@ -1,5 +1,5 @@
 From 22a04c62769132036670e2392ec97ec02696cfc9 Mon Sep 17 00:00:00 2001
-From: Mohammad Mosafer <mohsafer@gmail.com>
+From: [REDACTED_NAME] <[REDACTED_EMAIL]>
 Date: Tue, 6 Oct 2026 15:39:24 -0500
 Subject: [PATCH v2] usb: gadget: f_fs: fix use-after-free in ffs_closed() on
  umount
@@ -46,10 +46,10 @@ a KASAN kernel: the unpatched kernel reports the use-after-free
 reliably (2/2 runs), the patched kernel survives an extended soak with
 identical churn (2/2 runs clean).
 
-Reported-by: syzbot+6227549bd2c8a1ec8ba0@syzkaller.appspotmail.com
+Reported-by: [REDACTED_NAME] <[REDACTED_EMAIL]>
 Closes: https://syzkaller.appspot.com/bug?extid=6227549bd2c8a1ec8ba0
 Fixes: 5920cda627688c ("usb: gadget: FunctionFS: convert to new function interface with backward compatibility")
-Signed-off-by: Mohammad Mosafer <mohsafer@gmail.com>
+Signed-off-by: [REDACTED_NAME] <[REDACTED_EMAIL]>
 ---
 
 Changes in v2:
