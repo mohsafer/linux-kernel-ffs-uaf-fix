@@ -1,5 +1,5 @@
 From 5eb5c72c72fef76cb765ef1669b62b6a3ba1bfc8 Mon Sep 17 00:00:00 2001
-From: Gabriel Prostitis <prostitisgabriel@gmail.com>
+From: [REDACTED_NAME] <[REDACTED_EMAIL]>
 Date: Mon, 1 Jun 2026 08:44:10 +0200
 Subject: USB: gadget: ffs: fix mm lifetime handling
 
@@ -13,10 +13,10 @@ completion handling finishes.
 Take a reference with mmgrab() when queuing the read request
 and release it with mmdrop() on request completion.
 
-Reported-by: Gabriel Prostitis <prostitisgabriel@gmail.com>
-Signed-off-by: Gabriel Prostitis <prostitisgabriel@gmail.com>
-Link: https://patch.msgid.link/20260601-mm-uaf-fix-v2-1-3c942a707bce@gmail.com
-Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Reported-by: [REDACTED_NAME] <[REDACTED_EMAIL]>
+Signed-off-by: [REDACTED_NAME] <[REDACTED_EMAIL]>
+Link: https://patch.msgid.link/[REDACTED_EMAIL]
+Signed-off-by: [REDACTED_NAME] <[REDACTED_EMAIL]>
 ---
  drivers/usb/gadget/function/f_fs.c | 27 ++++++++++++++++++++-------
  1 file changed, 20 insertions(+), 7 deletions(-)

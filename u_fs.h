@@ -7,7 +7,7 @@
  * Copyright (c) 2013 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
  *
- * Author: Andrzej Pietrasiewicz <andrzejtp2010@gmail.com>
+ * Author: [REDACTED_NAME] <[REDACTED_EMAIL]>
  */
 
 #ifndef U_FFS_H
