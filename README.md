@@ -47,7 +47,7 @@ The complete patch is [`0001-usb-gadget-f_fs-fix-use-after-free-in-ffs_closed-on
   and 180 s soaks with the same harness. The churn runs every caller of
   the `lockdep_assert_held()`-guarded `_ffs_release_dev()` (13,296
   mkdir-rmdir / 2,304 mount-umount cycles in the 180 s run) with zero
-  lockdep splats (`repro/lockdep_soak180.log`).
+  lockdep splats (`repro/lockdep_soak180.log`; one-page report: `repro/lockdep_validation_report.pdf`).
 
 ## Reproducing
 
